@@ -202,20 +202,32 @@ def assemble_payload(
 
 def _parallel_fetch_daily() -> dict[str, list[dict[str, Any]]]:
     histories: dict[str, list[dict[str, Any]]] = {}
-    retry_delays = (0.0, 1.5, 4.0)
+    retry_delays = (0.0, 1.5, 4.0, 8.0, 15.0)
     for delay in retry_delays:
-        missing = [item for item in INSTRUMENTS if item.symbol not in histories]
-        if not missing:
+        newest_date = max(
+            (rows[-1]["date"] for rows in histories.values() if rows),
+            default="",
+        )
+        pending_instruments = [
+            item for item in INSTRUMENTS
+            if item.symbol not in histories
+            or (newest_date and histories[item.symbol][-1]["date"] < newest_date)
+        ]
+        if not pending_instruments:
             break
         if delay:
             time.sleep(delay)
-        with ThreadPoolExecutor(max_workers=min(4, len(missing))) as executor:
-            pending = {executor.submit(fetch_daily, item.symbol): item.symbol for item in missing}
+        with ThreadPoolExecutor(max_workers=min(4, len(pending_instruments))) as executor:
+            pending = {
+                executor.submit(fetch_daily, item.symbol): item.symbol
+                for item in pending_instruments
+            }
             for future in as_completed(pending):
                 symbol = pending[future]
                 try:
                     rows = future.result()
-                    if rows:
+                    current = histories.get(symbol)
+                    if rows and (not current or rows[-1]["date"] >= current[-1]["date"]):
                         histories[symbol] = rows
                 except Exception:
                     continue
