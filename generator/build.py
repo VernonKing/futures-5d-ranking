@@ -8,7 +8,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, time as clock_time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 import requests
@@ -202,16 +202,23 @@ def assemble_payload(
 
 def _parallel_fetch_daily() -> dict[str, list[dict[str, Any]]]:
     histories: dict[str, list[dict[str, Any]]] = {}
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        pending = {executor.submit(fetch_daily, item.symbol): item.symbol for item in INSTRUMENTS}
-        for future in as_completed(pending):
-            symbol = pending[future]
-            try:
-                rows = future.result()
-                if rows:
-                    histories[symbol] = rows
-            except Exception:
-                continue
+    retry_delays = (0.0, 1.5, 4.0)
+    for delay in retry_delays:
+        missing = [item for item in INSTRUMENTS if item.symbol not in histories]
+        if not missing:
+            break
+        if delay:
+            time.sleep(delay)
+        with ThreadPoolExecutor(max_workers=min(4, len(missing))) as executor:
+            pending = {executor.submit(fetch_daily, item.symbol): item.symbol for item in missing}
+            for future in as_completed(pending):
+                symbol = pending[future]
+                try:
+                    rows = future.result()
+                    if rows:
+                        histories[symbol] = rows
+                except Exception:
+                    continue
     return histories
 
 
@@ -230,6 +237,10 @@ def _parallel_fetch_minutes(instruments: list[Instrument]) -> dict[str, list[dic
     return histories
 
 
+def daily_coverage_is_acceptable(available: int, total: int) -> bool:
+    return total > 0 and available >= math.ceil(total * 0.9)
+
+
 def build_live_payload(now: datetime | None = None) -> dict[str, Any]:
     errors = validate_universe()
     if errors:
@@ -241,7 +252,7 @@ def build_live_payload(now: datetime | None = None) -> dict[str, Any]:
     if not source_date:
         raise RuntimeError("未获取到完整日K")
     current = {symbol: rows for symbol, rows in complete.items() if rows and rows[-1]["date"] == source_date}
-    if len(current) < len(INSTRUMENTS) * 0.5:
+    if not daily_coverage_is_acceptable(len(current), len(INSTRUMENTS)):
         raise RuntimeError(f"日线覆盖不足: {len(current)}/{len(INSTRUMENTS)}")
 
     ranked_rows = []
@@ -290,13 +301,36 @@ def write_payload(payload: dict[str, Any], output: Path) -> None:
     os.replace(temporary, output)
 
 
+def build_or_reuse_payload(
+    output: Path,
+    builder: Callable[[], dict[str, Any]] | None = None,
+) -> tuple[dict[str, Any], bool]:
+    builder = builder or build_live_payload
+    try:
+        return builder(), False
+    except RuntimeError as error:
+        if not output.exists():
+            raise
+        previous = json.loads(output.read_text(encoding="utf-8"))
+        coverage = previous.get("coverage", {})
+        if not daily_coverage_is_acceptable(
+            int(coverage.get("available", 0)),
+            int(coverage.get("total", 0)),
+        ):
+            raise error
+        print(f"live snapshot unavailable; reusing {output}: {error}", flush=True)
+        return previous, True
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="生成期货近5日收益分类榜静态数据")
     parser.add_argument("--output", type=Path, default=Path("site/data/latest.json"))
     args = parser.parse_args()
-    payload = build_live_payload()
-    write_payload(payload, args.output)
+    payload, reused = build_or_reuse_payload(args.output)
+    if not reused:
+        write_payload(payload, args.output)
     print(
+        f"status={'reused' if reused else 'generated'} "
         f"generated={payload['generatedAt']} data={payload['dataDate']} "
         f"coverage={payload['coverage']['available']}/{payload['coverage']['total']} "
         f"selected={len(payload['selectedSymbols'])}",
