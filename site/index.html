@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4f6f4">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+  <title>期货近5日收益分类榜</title>
+</head>
+<body>
+  <main class="shell">
+    <header class="masthead">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+        <div><p class="kicker">FUTURES · 5D RETURN BOARD</p><h1>期货近5日收益分类榜</h1></div>
+      </div>
+      <div class="data-meta">
+        <span><small>数据截止</small><strong id="data-date">--</strong></span>
+        <span><small>生成时间</small><strong id="generated-at">--</strong></span>
+        <span><small>覆盖</small><strong id="coverage">--</strong></span>
+      </div>
+    </header>
+
+    <section class="market-lead" aria-labelledby="lead-title">
+      <div class="lead-copy">
+        <p class="kicker">CATEGORY MEDIAN</p>
+        <h2 id="lead-title">品类中位数决定强弱，极端个品不替整体表态</h2>
+      </div>
+      <div id="headline-ranks" class="headline-ranks" aria-label="品类排名摘要"></div>
+    </section>
+
+    <nav class="viewbar" aria-label="榜单切换">
+      <div id="ranking-tabs" class="tabs" role="tablist">
+        <button type="button" class="active" data-view="rising" role="tab" aria-selected="true">领涨品类</button>
+        <button type="button" data-view="falling" role="tab" aria-selected="false">领跌品类</button>
+        <button type="button" data-view="all" role="tab" aria-selected="false">全部品类</button>
+      </div>
+      <div class="range-control" role="group" aria-label="图表范围">
+        <span>图表范围</span>
+        <button type="button" class="active" data-range="60">60根</button>
+        <button type="button" data-range="120">120根</button>
+      </div>
+    </nav>
+
+    <div id="loading" class="loading" role="status">正在读取最新收盘数据…</div>
+    <div id="error" class="error" role="alert" hidden></div>
+    <section id="category-list" class="category-list" aria-live="polite"></section>
+    <section id="category-table" class="category-table" hidden aria-label="全部品类排名"></section>
+
+    <footer class="footer">
+      <p>近5日收益按最新完整日K收盘价计算；品类按全部有效成员收益率中位数排序。有夜盘品种使用2小时K，无夜盘品种使用1小时K。</p>
+      <p>数据源为新浪财经国内期货连续合约公开行情，可能延迟或调整。仅用于趋势跟踪，不构成投资建议。</p>
+    </footer>
+  </main>
+</body>
+</html>
