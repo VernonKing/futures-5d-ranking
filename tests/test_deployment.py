@@ -9,6 +9,8 @@ class DeploymentTests(unittest.TestCase):
     def test_workflow_runs_weekdays_at_1540_china_time_and_deploys_pages(self):
         workflow = (ROOT / ".github" / "workflows" / "deploy.yml").read_text(encoding="utf-8")
         self.assertIn("40 7 * * 1-5", workflow)
+        self.assertIn("20 8 * * 1-5", workflow)
+        self.assertIn("20 9 * * 1-5", workflow)
         self.assertIn("workflow_dispatch", workflow)
         self.assertIn("python -m generator.build", workflow)
         self.assertIn("actions/upload-pages-artifact@v4", workflow)

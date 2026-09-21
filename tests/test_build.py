@@ -86,22 +86,27 @@ class ResilienceTests(unittest.TestCase):
 
     @patch("generator.build.time.sleep", return_value=None)
     @patch("generator.build.fetch_daily")
-    def test_daily_fetch_retries_only_missing_symbols(self, mock_fetch_daily, _mock_sleep):
+    def test_daily_fetch_retries_missing_and_stale_symbols(self, mock_fetch_daily, _mock_sleep):
         attempts = {}
         missing_once = INSTRUMENTS[0].symbol
+        stale_once = INSTRUMENTS[1].symbol
 
         def fake_fetch(symbol):
             attempts[symbol] = attempts.get(symbol, 0) + 1
             if symbol == missing_once and attempts[symbol] == 1:
                 return []
-            return [{"date": "2026-09-18", "close": 100.0}]
+            if symbol == stale_once and attempts[symbol] == 1:
+                return [{"date": "2026-09-18", "close": 99.0}]
+            return [{"date": "2026-09-21", "close": 100.0}]
 
         mock_fetch_daily.side_effect = fake_fetch
         result = build._parallel_fetch_daily()
 
         self.assertEqual(len(INSTRUMENTS), len(result))
         self.assertEqual(2, attempts[missing_once])
-        self.assertTrue(all(attempts[item.symbol] == 1 for item in INSTRUMENTS[1:]))
+        self.assertEqual(2, attempts[stale_once])
+        self.assertEqual("2026-09-21", result[stale_once][-1]["date"])
+        self.assertTrue(all(attempts[item.symbol] == 1 for item in INSTRUMENTS[2:]))
 
     def test_build_reuses_existing_snapshot_when_live_fetch_is_incomplete(self):
         previous = {
