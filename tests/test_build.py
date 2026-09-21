@@ -1,7 +1,10 @@
 import json
 import unittest
 from datetime import datetime
+from pathlib import Path
+from unittest.mock import patch
 
+from generator import build
 from generator.build import (
     assemble_payload,
     build_chart,
@@ -9,6 +12,7 @@ from generator.build import (
     parse_jsonp,
     parse_minute_payload,
 )
+from generator.market import INSTRUMENTS
 
 
 class ParsingTests(unittest.TestCase):
@@ -71,6 +75,60 @@ class PayloadTests(unittest.TestCase):
         self.assertEqual("甲", payload["rankings"]["falling"][0]["category"])
         self.assertEqual("2026-09-18", payload["dataDate"])
         json.dumps(payload, ensure_ascii=False, allow_nan=False)
+
+
+class ResilienceTests(unittest.TestCase):
+    def test_daily_coverage_requires_at_least_ninety_percent(self):
+        coverage_is_acceptable = getattr(build, "daily_coverage_is_acceptable", None)
+        self.assertIsNotNone(coverage_is_acceptable)
+        self.assertFalse(coverage_is_acceptable(69, 78))
+        self.assertTrue(coverage_is_acceptable(71, 78))
+
+    @patch("generator.build.time.sleep", return_value=None)
+    @patch("generator.build.fetch_daily")
+    def test_daily_fetch_retries_only_missing_symbols(self, mock_fetch_daily, _mock_sleep):
+        attempts = {}
+        missing_once = INSTRUMENTS[0].symbol
+
+        def fake_fetch(symbol):
+            attempts[symbol] = attempts.get(symbol, 0) + 1
+            if symbol == missing_once and attempts[symbol] == 1:
+                return []
+            return [{"date": "2026-09-18", "close": 100.0}]
+
+        mock_fetch_daily.side_effect = fake_fetch
+        result = build._parallel_fetch_daily()
+
+        self.assertEqual(len(INSTRUMENTS), len(result))
+        self.assertEqual(2, attempts[missing_once])
+        self.assertTrue(all(attempts[item.symbol] == 1 for item in INSTRUMENTS[1:]))
+
+    def test_build_reuses_existing_snapshot_when_live_fetch_is_incomplete(self):
+        previous = {
+            "schemaVersion": 1,
+            "generatedAt": "2026-09-21T15:40:00+08:00",
+            "dataDate": "2026-09-18",
+            "coverage": {"available": 78, "total": 78},
+            "rankings": {"rising": [], "falling": []},
+            "categoryTable": [],
+            "selectedSymbols": [],
+            "charts": {},
+        }
+        output = Path("tests/.tmp_latest.json")
+        try:
+            output.write_text(json.dumps(previous), encoding="utf-8")
+
+            def incomplete_builder():
+                raise RuntimeError("日线覆盖不足: 34/78")
+
+            build_or_reuse_payload = getattr(build, "build_or_reuse_payload", None)
+            self.assertIsNotNone(build_or_reuse_payload)
+            payload, reused = build_or_reuse_payload(output, incomplete_builder)
+        finally:
+            output.unlink(missing_ok=True)
+
+        self.assertTrue(reused)
+        self.assertEqual(previous, payload)
 
 
 if __name__ == "__main__":
