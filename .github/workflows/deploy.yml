@@ -4,9 +4,8 @@ on:
   schedule:
     # GitHub cron uses UTC. Retry after the close because upstream daily bars
     # can be published in batches.
-    - cron: "40 7 * * 1-5"
-    - cron: "20 8 * * 1-5"
-    - cron: "20 9 * * 1-5"
+    - cron: "0 8 * * 1-5"
+    - cron: "25 8 * * 1-5"
   workflow_dispatch:
   push:
     branches: [main]
