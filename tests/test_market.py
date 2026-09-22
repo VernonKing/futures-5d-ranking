@@ -2,6 +2,7 @@ import unittest
 
 from generator.market import (
     INSTRUMENTS,
+    SINA_NODE_BY_SYMBOL,
     aggregate_hourly,
     five_day_return,
     moving_average,
@@ -29,6 +30,14 @@ class UniverseTests(unittest.TestCase):
             grouped.setdefault(item.category, []).append(item.symbol)
         self.assertEqual(["LH0"], grouped["生猪"])
         self.assertEqual(["EC0"], grouped["航运"])
+
+    def test_every_product_has_a_sina_contract_list_node(self):
+        self.assertEqual(
+            {item.symbol for item in INSTRUMENTS},
+            set(SINA_NODE_BY_SYMBOL),
+        )
+        self.assertEqual("lwg_qh", SINA_NODE_BY_SYMBOL["RB0"])
+        self.assertEqual("tl_qh", SINA_NODE_BY_SYMBOL["TL0"])
 
 
 class RankingTests(unittest.TestCase):

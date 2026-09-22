@@ -35,6 +35,15 @@ class ParsingTests(unittest.TestCase):
         self.assertEqual("2026-09-18 10:00:00", rows[0]["datetime"])
         self.assertEqual(7.0, rows[0]["volume"])
 
+    def test_main_contract_excludes_only_continuous_symbol_and_ranks_open_interest(self):
+        rows = [
+            {"symbol": "MA0", "position": "900000", "volume": "500000"},
+            {"symbol": "MA2610", "position": "200000", "volume": "100000"},
+            {"symbol": "MA2701", "position": "200000", "volume": "120000"},
+            {"symbol": "MA2705", "position": "not-a-number", "volume": "999999"},
+        ]
+        self.assertEqual("MA2701", build.select_main_contract("MA0", rows))
+
 
 class PayloadTests(unittest.TestCase):
     def test_chart_contains_required_moving_averages(self):
@@ -76,6 +85,68 @@ class PayloadTests(unittest.TestCase):
         self.assertEqual("2026-09-18", payload["dataDate"])
         json.dumps(payload, ensure_ascii=False, allow_nan=False)
 
+    @patch("generator.build._parallel_fetch_minutes")
+    @patch("generator.build._parallel_fetch_daily")
+    @patch("generator.build.resolve_main_contracts")
+    def test_live_build_uses_same_concrete_contract_for_returns_and_charts(
+        self,
+        mock_resolve,
+        mock_daily,
+        mock_minutes,
+    ):
+        contracts = {
+            item.symbol: f"{item.symbol[:-1]}2610"
+            for item in INSTRUMENTS
+        }
+        histories = {}
+        for index, item in enumerate(INSTRUMENTS):
+            histories[item.symbol] = [
+                {
+                    "date": f"2026-09-{day:02d}",
+                    "open": 100 + index + day,
+                    "high": 102 + index + day,
+                    "low": 99 + index + day,
+                    "close": 101 + index + day,
+                    "volume": 1000,
+                }
+                for day in range(14, 22)
+            ]
+        mock_resolve.return_value = contracts
+        mock_daily.return_value = histories
+        mock_minutes.return_value = {
+            item.symbol: [
+                {
+                    "datetime": "2026-09-21 15:00:00",
+                    "open": 100,
+                    "high": 101,
+                    "low": 99,
+                    "close": 100,
+                    "volume": 10,
+                }
+            ]
+            for item in INSTRUMENTS
+        }
+
+        payload = build.build_live_payload(datetime(2026, 9, 21, 16, 0))
+
+        mock_daily.assert_called_once_with(contracts)
+        selected_items, minute_contracts = mock_minutes.call_args.args
+        self.assertEqual(contracts, minute_contracts)
+        members = [
+            member
+            for side in payload["rankings"].values()
+            for category in side
+            for member in category["members"]
+        ]
+        self.assertTrue(members)
+        self.assertTrue(all(member["contract"] == contracts[member["symbol"]] for member in members))
+        self.assertTrue(selected_items)
+        self.assertTrue(all(
+            payload["charts"][item.symbol]["contract"] == contracts[item.symbol]
+            for item in selected_items
+        ))
+        self.assertIn("具体主力合约", payload["source"])
+
 
 class ResilienceTests(unittest.TestCase):
     def test_daily_coverage_requires_at_least_ninety_percent(self):
@@ -90,17 +161,23 @@ class ResilienceTests(unittest.TestCase):
         attempts = {}
         missing_once = INSTRUMENTS[0].symbol
         stale_once = INSTRUMENTS[1].symbol
+        contracts = {
+            item.symbol: f"{item.symbol[:-1]}2610"
+            for item in INSTRUMENTS
+        }
+        products = {contract: product for product, contract in contracts.items()}
 
-        def fake_fetch(symbol):
-            attempts[symbol] = attempts.get(symbol, 0) + 1
-            if symbol == missing_once and attempts[symbol] == 1:
+        def fake_fetch(contract):
+            product = products[contract]
+            attempts[product] = attempts.get(product, 0) + 1
+            if product == missing_once and attempts[product] == 1:
                 return []
-            if symbol == stale_once and attempts[symbol] == 1:
+            if product == stale_once and attempts[product] == 1:
                 return [{"date": "2026-09-18", "close": 99.0}]
             return [{"date": "2026-09-21", "close": 100.0}]
 
         mock_fetch_daily.side_effect = fake_fetch
-        result = build._parallel_fetch_daily()
+        result = build._parallel_fetch_daily(contracts)
 
         self.assertEqual(len(INSTRUMENTS), len(result))
         self.assertEqual(2, attempts[missing_once])
