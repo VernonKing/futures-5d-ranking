@@ -15,6 +15,7 @@ import requests
 
 from generator.market import (
     INSTRUMENTS,
+    SINA_NODE_BY_SYMBOL,
     Instrument,
     aggregate_hourly,
     five_day_return,
@@ -33,6 +34,11 @@ DAILY_URLS = (
 MINUTE_URL = (
     "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/"
     "var%20_{symbol}_60_=/InnerFuturesNewService.getFewMinLine?symbol={symbol}&type=60"
+)
+MAIN_CONTRACT_URL = (
+    "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/"
+    "Market_Center.getHQFuturesData?page=1&num=50&sort=position&asc=0&"
+    "node={node}&base=futures"
 )
 
 
@@ -126,6 +132,62 @@ def fetch_minute(symbol: str) -> list[dict[str, Any]]:
     return parse_minute_payload(_get_json([MINUTE_URL.format(symbol=symbol)]))
 
 
+def select_main_contract(product_symbol: str, rows: Any) -> str | None:
+    product = product_symbol.upper()
+    root = product[:-1]
+    candidates: list[tuple[float, float, str]] = []
+    for row in rows or []:
+        try:
+            symbol = str(row["symbol"]).strip().upper()
+            suffix = symbol[len(root):]
+            if symbol == product or not symbol.startswith(root) or not suffix.isdigit():
+                continue
+            position = _float(row["position"])
+            volume = _float(row.get("volume", 0))
+            candidates.append((position, volume, symbol))
+        except (KeyError, TypeError, ValueError):
+            continue
+    if not candidates:
+        return None
+    return max(candidates)[2]
+
+
+def fetch_main_contract(instrument: Instrument) -> str | None:
+    node = SINA_NODE_BY_SYMBOL[instrument.symbol]
+    rows = _get_json([MAIN_CONTRACT_URL.format(node=node)])
+    return select_main_contract(instrument.symbol, rows)
+
+
+def resolve_main_contracts() -> dict[str, str]:
+    contracts: dict[str, str] = {}
+    retry_delays = (0.0, 1.5, 4.0)
+    for delay in retry_delays:
+        pending_instruments = [
+            item for item in INSTRUMENTS
+            if item.symbol not in contracts
+        ]
+        if not pending_instruments:
+            break
+        if delay:
+            time.sleep(delay)
+        with ThreadPoolExecutor(max_workers=min(4, len(pending_instruments))) as executor:
+            pending = {
+                executor.submit(fetch_main_contract, item): item.symbol
+                for item in pending_instruments
+            }
+            for future in as_completed(pending):
+                product_symbol = pending[future]
+                try:
+                    contract = future.result()
+                    if contract:
+                        contracts[product_symbol] = contract
+                except Exception:
+                    continue
+    if not daily_coverage_is_acceptable(len(contracts), len(INSTRUMENTS)):
+        raise RuntimeError(f"主力合约识别不足: {len(contracts)}/{len(INSTRUMENTS)}")
+    return contracts
+
+
 def completed_daily_rows(rows: list[dict[str, Any]], now: datetime) -> list[dict[str, Any]]:
     today = now.date().isoformat()
     include_today = now.weekday() < 5 and now.time() >= clock_time(15, 35)
@@ -182,13 +244,14 @@ def assemble_payload(
         seen.add(item["category"])
         category_table.append({key: item[key] for key in ("category", "medianReturn", "memberCount")})
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "generatedAt": generated_at.replace(microsecond=0).isoformat(),
         "dataDate": source_date,
         "coverage": {"available": coverage[0], "total": coverage[1]},
         "method": {
             "return": "最新完整日K收盘价 / 5个交易日前收盘价 - 1",
             "category": "品类全部有效品种近5日收益率中位数",
+            "mainContract": "运行时按持仓量优先、成交量次优识别具体主力合约，同一合约用于收益、价格和图表",
             "nightIntraday": "2小时K（60分钟K按时间顺序每两根聚合）",
             "dayIntraday": "1小时K",
         },
@@ -196,11 +259,11 @@ def assemble_payload(
         "categoryTable": category_table,
         "selectedSymbols": selected,
         "charts": charts,
-        "source": "新浪财经国内期货连续合约公开行情接口",
+        "source": "新浪财经国内期货具体主力合约公开行情接口",
     }
 
 
-def _parallel_fetch_daily() -> dict[str, list[dict[str, Any]]]:
+def _parallel_fetch_daily(contract_by_product: dict[str, str]) -> dict[str, list[dict[str, Any]]]:
     histories: dict[str, list[dict[str, Any]]] = {}
     retry_delays = (0.0, 1.5, 4.0, 8.0, 15.0)
     for delay in retry_delays:
@@ -210,8 +273,10 @@ def _parallel_fetch_daily() -> dict[str, list[dict[str, Any]]]:
         )
         pending_instruments = [
             item for item in INSTRUMENTS
-            if item.symbol not in histories
+            if item.symbol in contract_by_product
+            and (item.symbol not in histories
             or (newest_date and histories[item.symbol][-1]["date"] < newest_date)
+            )
         ]
         if not pending_instruments:
             break
@@ -219,7 +284,7 @@ def _parallel_fetch_daily() -> dict[str, list[dict[str, Any]]]:
             time.sleep(delay)
         with ThreadPoolExecutor(max_workers=min(4, len(pending_instruments))) as executor:
             pending = {
-                executor.submit(fetch_daily, item.symbol): item.symbol
+                executor.submit(fetch_daily, contract_by_product[item.symbol]): item.symbol
                 for item in pending_instruments
             }
             for future in as_completed(pending):
@@ -234,10 +299,17 @@ def _parallel_fetch_daily() -> dict[str, list[dict[str, Any]]]:
     return histories
 
 
-def _parallel_fetch_minutes(instruments: list[Instrument]) -> dict[str, list[dict[str, Any]]]:
+def _parallel_fetch_minutes(
+    instruments: list[Instrument],
+    contract_by_product: dict[str, str],
+) -> dict[str, list[dict[str, Any]]]:
     histories: dict[str, list[dict[str, Any]]] = {}
     with ThreadPoolExecutor(max_workers=6) as executor:
-        pending = {executor.submit(fetch_minute, item.symbol): item.symbol for item in instruments}
+        pending = {
+            executor.submit(fetch_minute, contract_by_product[item.symbol]): item.symbol
+            for item in instruments
+            if item.symbol in contract_by_product
+        }
         for future in as_completed(pending):
             symbol = pending[future]
             try:
@@ -258,7 +330,8 @@ def build_live_payload(now: datetime | None = None) -> dict[str, Any]:
     if errors:
         raise RuntimeError("; ".join(errors))
     now = now or datetime.now(TZ)
-    fetched = _parallel_fetch_daily()
+    contract_by_product = resolve_main_contracts()
+    fetched = _parallel_fetch_daily(contract_by_product)
     complete = {symbol: completed_daily_rows(rows, now) for symbol, rows in fetched.items()}
     source_date = max((rows[-1]["date"] for rows in complete.values() if rows), default="")
     if not source_date:
@@ -277,6 +350,7 @@ def build_live_payload(now: datetime | None = None) -> dict[str, Any]:
             "category": instrument.category,
             "name": instrument.name,
             "symbol": instrument.symbol,
+            "contract": contract_by_product[instrument.symbol],
             "hasNight": instrument.has_night,
             "price": rows[-1]["close"],
             "return5": value,
@@ -288,12 +362,13 @@ def build_live_payload(now: datetime | None = None) -> dict[str, Any]:
     )
     selected = set(provisional["selectedSymbols"])
     selected_instruments = [item for item in INSTRUMENTS if item.symbol in selected]
-    minute_histories = _parallel_fetch_minutes(selected_instruments)
+    minute_histories = _parallel_fetch_minutes(selected_instruments, contract_by_product)
     charts = {}
     for instrument in selected_instruments:
         daily = current.get(instrument.symbol, [])
         hourly = aggregate_hourly(minute_histories.get(instrument.symbol, []), instrument.has_night)
         charts[instrument.symbol] = {
+            "contract": contract_by_product[instrument.symbol],
             "intradayPeriod": "2h" if instrument.has_night else "1h",
             "intraday": build_chart(hourly, "datetime", (5, 10, 60), limit=140),
             "daily": build_chart(daily, "date", (5, 10), limit=140),

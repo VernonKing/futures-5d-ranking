@@ -65,6 +65,36 @@ INSTRUMENTS = [
 ]
 
 
+SINA_NODE_BY_SYMBOL = {
+    # 郑州商品交易所
+    "TA0": "pta_qh", "OI0": "czy_qh", "RM0": "czp_qh", "FG0": "bl_qh",
+    "SF0": "gt_qh", "SM0": "mg_qh", "SR0": "bst_qh", "CF0": "mh_qh",
+    "MA0": "zc_qh", "CY0": "ms_qh", "AP0": "xpg_qh", "CJ0": "hz_qh",
+    "UR0": "ns_qh", "SA0": "cj_qh", "PF0": "pf_qh", "PK0": "pk_qh",
+    "SH0": "sh_qh", "PX0": "px_qh", "PR0": "pr_qh", "PL0": "pl_qh",
+    # 大连商品交易所
+    "V0": "pvc_qh", "P0": "zly_qh", "B0": "de_qh", "M0": "dp_qh",
+    "I0": "tks_qh", "JD0": "jd_qh", "L0": "lldpe_qh", "PP0": "jbx_qh",
+    "Y0": "dy_qh", "C0": "hym_qh", "A0": "dd_qh", "J0": "jt_qh",
+    "JM0": "jm_qh", "CS0": "ymdf_qh", "EG0": "yec_qh", "RR0": "gm_qh",
+    "EB0": "byx_qh", "PG0": "pg_qh", "LH0": "lh_qh", "LG0": "lg_qh",
+    "BZ0": "bz_qh",
+    # 上海期货交易所、上海国际能源交易中心
+    "FU0": "ry_qh", "SC0": "yy_qh", "AL0": "lv_qh", "RU0": "xj_qh",
+    "ZN0": "xing_qh", "CU0": "tong_qh", "AU0": "hj_qh", "RB0": "lwg_qh",
+    "PB0": "qian_qh", "AG0": "by_qh", "BU0": "lq_qh", "HC0": "rzjb_qh",
+    "SN0": "xi_qh", "NI0": "ni_qh", "SP0": "zj_qh", "NR0": "ehj_qh",
+    "SS0": "bxg_qh", "LU0": "lu_qh", "BC0": "bc_qh", "AO0": "ao_qh",
+    "BR0": "br_qh", "EC0": "ec_qh", "AD0": "ad_qh", "OP0": "op_qh",
+    # 中国金融期货交易所
+    "IF0": "qz_qh", "TF0": "gz_qh", "T0": "sngz_qh", "IH0": "szgz_qh",
+    "IC0": "zzgz_qh", "TS0": "engz_qh", "IM0": "im_qh", "TL0": "tl_qh",
+    # 广州期货交易所
+    "SI0": "si_qh", "LC0": "lc_qh", "PS0": "ps_qh", "PT0": "pt_qh",
+    "PD0": "pd_qh",
+}
+
+
 VALID_CATEGORIES = {
     "贵金属", "工业金属", "黑色系", "新能源", "股指", "利率债",
     "能源与油头化工", "基础化工", "农业", "生猪", "航运",
@@ -83,6 +113,13 @@ def validate_universe() -> list[str]:
     missing = sorted(VALID_CATEGORIES - {item.category for item in INSTRUMENTS})
     if missing:
         errors.append(f"空分类: {', '.join(missing)}")
+    product_symbols = set(symbols)
+    missing_nodes = sorted(product_symbols - set(SINA_NODE_BY_SYMBOL))
+    extra_nodes = sorted(set(SINA_NODE_BY_SYMBOL) - product_symbols)
+    if missing_nodes:
+        errors.append(f"缺少新浪节点: {', '.join(missing_nodes)}")
+    if extra_nodes:
+        errors.append(f"多余新浪节点: {', '.join(extra_nodes)}")
     return errors
 
 
