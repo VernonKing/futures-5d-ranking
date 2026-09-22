@@ -122,7 +122,7 @@ function instrumentCard(member) {
   const chart = payload.charts[member.symbol] || { intradayPeriod: member.hasNight ? "2h" : "1h", intraday: [], daily: [] };
   const article = el("article", "instrument");
   const head = el("header", "instrument-head"), identity = el("div", "instrument-id");
-  const name = el("h3", "", member.name); name.append(el("span", "symbol", member.symbol));
+  const name = el("h3", "", member.name); name.append(el("span", "symbol", member.contract || member.symbol));
   const line = el("div", "price-line"); line.append(el("span", "", "收盘价"), el("strong", "", price(member.price)), el("span", "", member.dataDate.slice(5)));
   identity.append(name, line); head.append(identity, el("strong", `return-value ${tone(member.return5)}`, pct(member.return5)));
   const stack = el("div", "chart-stack");
