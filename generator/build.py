@@ -322,7 +322,21 @@ def _parallel_fetch_minutes(
 
 
 def daily_coverage_is_acceptable(available: int, total: int) -> bool:
-    return total > 0 and available >= math.ceil(total * 0.9)
+    return total > 0 and available == total
+
+
+def describe_daily_gaps(
+    histories: dict[str, list[dict[str, Any]]],
+    source_date: str,
+    instruments: list[Instrument] = INSTRUMENTS,
+) -> list[str]:
+    gaps = []
+    for instrument in instruments:
+        rows = histories.get(instrument.symbol, [])
+        latest_date = rows[-1]["date"] if rows else "无数据"
+        if latest_date != source_date:
+            gaps.append(f"{instrument.name}/{instrument.symbol}:{latest_date}")
+    return gaps
 
 
 def build_live_payload(now: datetime | None = None) -> dict[str, Any]:
@@ -338,7 +352,11 @@ def build_live_payload(now: datetime | None = None) -> dict[str, Any]:
         raise RuntimeError("未获取到完整日K")
     current = {symbol: rows for symbol, rows in complete.items() if rows and rows[-1]["date"] == source_date}
     if not daily_coverage_is_acceptable(len(current), len(INSTRUMENTS)):
-        raise RuntimeError(f"日线覆盖不足: {len(current)}/{len(INSTRUMENTS)}")
+        gaps = describe_daily_gaps(complete, source_date)
+        raise RuntimeError(
+            f"日线覆盖不足: {len(current)}/{len(INSTRUMENTS)}; "
+            f"缺失或滞后: {', '.join(gaps)}"
+        )
 
     ranked_rows = []
     for instrument in INSTRUMENTS:
