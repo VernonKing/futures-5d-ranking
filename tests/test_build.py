@@ -149,11 +149,27 @@ class PayloadTests(unittest.TestCase):
 
 
 class ResilienceTests(unittest.TestCase):
-    def test_daily_coverage_requires_at_least_ninety_percent(self):
+    def test_daily_coverage_requires_full_universe(self):
         coverage_is_acceptable = getattr(build, "daily_coverage_is_acceptable", None)
         self.assertIsNotNone(coverage_is_acceptable)
-        self.assertFalse(coverage_is_acceptable(69, 78))
-        self.assertTrue(coverage_is_acceptable(71, 78))
+        self.assertFalse(coverage_is_acceptable(77, 78))
+        self.assertTrue(coverage_is_acceptable(78, 78))
+
+    def test_daily_gap_details_identify_missing_and_stale_products(self):
+        describe_daily_gaps = getattr(build, "describe_daily_gaps", None)
+        self.assertIsNotNone(describe_daily_gaps)
+        current, stale, missing = INSTRUMENTS[:3]
+        histories = {
+            current.symbol: [{"date": "2026-09-23", "close": 100.0}],
+            stale.symbol: [{"date": "2026-09-22", "close": 99.0}],
+        }
+
+        details = describe_daily_gaps(histories, "2026-09-23", [current, stale, missing])
+
+        self.assertEqual([
+            f"{stale.name}/{stale.symbol}:2026-09-22",
+            f"{missing.name}/{missing.symbol}:无数据",
+        ], details)
 
     @patch("generator.build.time.sleep", return_value=None)
     @patch("generator.build.fetch_daily")
