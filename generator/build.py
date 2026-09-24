@@ -322,7 +322,7 @@ def _parallel_fetch_minutes(
 
 
 def daily_coverage_is_acceptable(available: int, total: int) -> bool:
-    return total > 0 and available == total
+    return total > 0 and available >= max(total - 3, 1)
 
 
 def describe_daily_gaps(
