@@ -149,10 +149,11 @@ class PayloadTests(unittest.TestCase):
 
 
 class ResilienceTests(unittest.TestCase):
-    def test_daily_coverage_requires_full_universe(self):
+    def test_daily_coverage_allows_at_most_three_missing_products(self):
         coverage_is_acceptable = getattr(build, "daily_coverage_is_acceptable", None)
         self.assertIsNotNone(coverage_is_acceptable)
-        self.assertFalse(coverage_is_acceptable(77, 78))
+        self.assertFalse(coverage_is_acceptable(74, 78))
+        self.assertTrue(coverage_is_acceptable(75, 78))
         self.assertTrue(coverage_is_acceptable(78, 78))
 
     def test_daily_gap_details_identify_missing_and_stale_products(self):
