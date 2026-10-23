@@ -2,7 +2,7 @@ name: Update market data and deploy Pages
 
 on:
   schedule:
-      - cron: "7,17 8 * * 1-5"
+    - cron: "7,17 8 * * 1-5"
     # GitHub cron uses UTC. Sina can publish individual daily bars hours after
     # the close, so retry in stages and stop once today's full snapshot exists.
     - cron: "0 8 * * 1-5"
